@@ -351,4 +351,157 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     })();
 
+    // ========================================================
+    // HELPER: Formspree submission (replaces backend dependency)
+    // ========================================================
+    async function submitToFormspree(url, payload, timeout = 12000) {
+        return await postJSON(url, payload, timeout);
+    }
+
+    // HELPER: show form result (inline)
+    function showFormResult(form, message, success) {
+        let container = form.querySelector('.form-result');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'form-result';
+            container.setAttribute('aria-live', 'polite');
+            container.style.marginTop = '12px';
+            form.appendChild(container);
+        }
+        container.textContent = message;
+        container.style.color = success ? '#0a7a0a' : '#b71c1c';
+    }
+
+    // HERO forms (index + any other .hero-form)
+    (function attachHeroFormHandlers() {
+        const forms = document.querySelectorAll('form.hero-form');
+        if (!forms || forms.length === 0) return;
+        forms.forEach(form => {
+            if (form.dataset.handlerAttached) return;
+            form.dataset.handlerAttached = '1';
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                // prefer explicit data-formspree then action attribute
+                const endpoint = (form.dataset.formspree || form.getAttribute('action') || '').trim();
+                if (!endpoint || endpoint.includes('REPLACE_WITH_FORMSPREE_ID') || endpoint.includes('YOUR_FORMSPREE_ID')) {
+                    showFormResult(form, 'Form endpoint not configured. Replace REPLACE_WITH_FORMSPREE_ID with your Formspree ID.', false);
+                    alert('Form endpoint not configured. Please set your Formspree form ID.');
+                    return;
+                }
+
+                const submitBtn = form.querySelector("button[type='submit']");
+                const originalText = submitBtn ? submitBtn.innerText : '';
+                if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Sending...'; }
+
+                const formData = new FormData(form);
+                const honey = (formData.get('_gotcha') || '').toString().trim();
+                if (honey) {
+                    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+                    showFormResult(form, 'Message sent successfully', true);
+                    form.reset();
+                    return;
+                }
+
+                const payload = {};
+                for (const [k, v] of formData.entries()) {
+                    if (k === '_gotcha') continue;
+                    payload[k] = v;
+                }
+
+                try {
+                    const { res, data, text } = await submitToFormspree(endpoint, payload, 12000);
+                    if (res && (res.status === 200 || res.status === 201)) {
+                        showFormResult(form, 'Enquiry sent successfully', true);
+                        alert('Enquiry sent successfully');
+                        form.reset();
+                    } else if (res && res.status === 404) {
+                        showFormResult(form, 'Form not found — check your Formspree ID', false);
+                        alert('Form not found — check your Formspree ID');
+                    } else {
+                        const errMsg = (data && (data.error || data.message)) ? (data.error || data.message) : (res && res.statusText) || text || 'Failed to send';
+                        showFormResult(form, errMsg, false);
+                        alert(errMsg || 'Failed to send enquiry');
+                    }
+                } catch (err) {
+                    console.error('Formspree network error', err);
+                    if (err.name === 'AbortError') showFormResult(form, 'Network timeout. Please try again.', false);
+                    else showFormResult(form, 'Network error. Please try again later.', false);
+                    alert(err.name === 'AbortError' ? 'Network timeout. Please try again.' : 'Network error. Please try again later.');
+                } finally {
+                    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+                }
+            });
+        });
+    })();
+
+    // CONTACT form (#contactForm) — single handler
+    (function attachContactForm() {
+        const form = document.getElementById('contactForm');
+        if (!form) return;
+        if (form.dataset.contactHandlerAttached) return;
+        form.dataset.contactHandlerAttached = '1';
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const endpoint = (form.dataset.formspree || form.getAttribute('action') || '').trim();
+            if (!endpoint || endpoint.includes('REPLACE_WITH_FORMSPREE_ID') || endpoint.includes('YOUR_FORMSPREE_ID')) {
+                showFormResult(form, 'Form endpoint not configured. Replace REPLACE_WITH_FORMSPREE_ID with your Formspree ID.', false);
+                alert('Form endpoint not configured. Please set your Formspree form ID.');
+                return;
+            }
+
+            const submitBtn = form.querySelector("button[type='submit']");
+            const originalText = submitBtn ? submitBtn.innerText : '';
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Sending...'; }
+
+            const formData = new FormData(form);
+            const honey = (formData.get('_gotcha') || '').toString().trim();
+            if (honey) {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+                showFormResult(form, 'Message sent successfully', true);
+                form.reset();
+                return;
+            }
+
+            const payload = {};
+            ['name', 'email', 'phone', 'message'].forEach(k => {
+                const v = formData.get(k);
+                if (v !== null) payload[k] = v.toString();
+            });
+            payload.source = 'contact';
+
+            if (!payload.name || !payload.email || !payload.message) {
+                showFormResult(form, 'Please fill in name, email, and message.', false);
+                alert('Please fill in your name, email, and message.');
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+                return;
+            }
+
+            try {
+                const { res, data, text } = await submitToFormspree(endpoint, payload, 12000);
+                if (res && (res.status === 200 || res.status === 201)) {
+                    showFormResult(form, 'Message sent successfully', true);
+                    alert('Message sent successfully');
+                    form.reset();
+                } else if (res && res.status === 404) {
+                    showFormResult(form, 'Form not found — check your Formspree ID', false);
+                    alert('Form not found — check your Formspree ID');
+                } else {
+                    const errMsg = (data && (data.error || data.message)) ? (data.error || data.message) : (res && res.statusText) || text || 'Something went wrong';
+                    showFormResult(form, errMsg, false);
+                    alert(errMsg || 'Something went wrong');
+                }
+            } catch (err) {
+                console.error('Formspree network error', err);
+                if (err.name === 'AbortError') showFormResult(form, 'Network timeout. Please try again.', false);
+                else showFormResult(form, 'Network error. Please try again later.', false);
+                alert(err.name === 'AbortError' ? 'Network timeout. Please try again.' : 'Network error. Please try again later.');
+            } finally {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = originalText; }
+            }
+        });
+    })();
+
 });
